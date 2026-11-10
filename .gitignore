@@ -1,0 +1,10 @@
+# Build & binary artifacts
+workerd
+*.tar.gz
+*.so
+*.o
+*.log
+SHA256SUMS
+bazel-*
+do-data/
+workerd-src/

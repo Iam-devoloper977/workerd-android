@@ -1,0 +1,119 @@
+diff --git a/.bazelrc b/.bazelrc
+index e3915bc..6d43e5a 100644
+--- a/.bazelrc
++++ b/.bazelrc
+@@ -194,6 +194,27 @@ build:release_linux --linkopt="-Wl,-O2"
+ build:release_macos --config=release_unix
+ build:release_macos --linkopt="-Wl,-no_data_in_code_info"
+ build:release_macos --linkopt="-Wl,-no_function_starts"
++
++# --- Android ARM64 Bionic libc configuration ---
++# Disables TCMalloc to support 39-bit virtual address (VA) space on Android kernels
++# Enforces Bionic libc API 29 compatibility and system allocator fallback
++build:android --config=unix
++build:android --@workerd//src/workerd/server:use_tcmalloc=False
++build:android --@v8//:v8_use_perfetto=False
++build:android --copt=-D__ANDROID__
++build:android --copt=-D__ANDROID_API__=29
++build:android --copt=-D_GNU_SOURCE
++build:android --copt=-fPIC
++build:android --linkopt=-fuse-ld=lld
++build:android --linkopt=-Wl,-z,nocopyreloc
++build:android --linkopt=-Wl,--hash-style=both
++build:android --linkopt=-llog
++build:android --strip=always
++
++build:release_android --config=release_unix
++build:release_android --config=android
++build:release_android --linkopt="-Wl,-O2"
++
+ # Cross-compiled release build for x86_64.
+ build:release_linux_x86_64 --config=release_linux
+ build:release_linux_x86_64 --platforms=@toolchains_llvm//platforms:linux-x86_64
+diff --git a/build/deps/rust.MODULE.bazel b/build/deps/rust.MODULE.bazel
+index 4519967..e58b104 100644
+--- a/build/deps/rust.MODULE.bazel
++++ b/build/deps/rust.MODULE.bazel
+@@ -8,6 +8,7 @@ RUST_TARGET_TRIPLES = [
+     "aarch64-apple-darwin",
+     "x86_64-unknown-linux-gnu",
+     "x86_64-pc-windows-msvc",
++    "aarch64-linux-android",
+ ]
+ 
+ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+@@ -20,6 +21,7 @@ rust.toolchain(
+         "x86_64-apple-darwin": ["-Ctarget-feature=+sse4.2,+pclmulqdq"],
+         "x86_64-pc-windows-msvc": ["-Ctarget-feature=+sse4.2,+pclmulqdq"],
+         "aarch64-unknown-linux-gnu": ["-Ctarget-feature=+crc"],
++        "aarch64-linux-android": ["-Ctarget-feature=+crc"],
+         # No options needed for aarch64-apple-darwin: CRC feature is enabled by default.
+     },
+     extra_target_triples = RUST_TARGET_TRIPLES,
+diff --git a/npm/lib/node-platform.ts b/npm/lib/node-platform.ts
+index ebe70e9..a796684 100644
+--- a/npm/lib/node-platform.ts
++++ b/npm/lib/node-platform.ts
+@@ -23,6 +23,7 @@ export const knownPackages: Record<string, string> = {
+   "linux x64 LE": "@cloudflare/workerd-linux-64",
+   "win32 x64 LE": "@cloudflare/workerd-windows-64",
+   "win32 arm64 LE": "@cloudflare/workerd-windows-64",
++  "android arm64 LE": "@cloudflare/workerd-linux-arm64",
+ };
+ 
+ const maybeExeExtension = process.platform === "win32" ? ".exe" : "";
+@@ -59,6 +60,18 @@ export function downloadedBinPath(pkg: string, subpath: string): string {
+ }
+ 
+ export function generateBinPath(): { binPath: string } {
++  if (process.env.WRANGLER_WORKERD_BINARY && fs.existsSync(process.env.WRANGLER_WORKERD_BINARY)) {
++    return { binPath: process.env.WRANGLER_WORKERD_BINARY };
++  }
++  if (process.env.MINIFLARE_WORKERD_PATH && fs.existsSync(process.env.MINIFLARE_WORKERD_PATH)) {
++    return { binPath: process.env.MINIFLARE_WORKERD_PATH };
++  }
++  if (process.platform === "android") {
++    const termuxFallback = path.join(process.env.HOME || "", ".local", "bin", "workerd");
++    if (fs.existsSync(termuxFallback)) {
++      return { binPath: termuxFallback };
++    }
++  }
+   const { pkg, subpath } = pkgAndSubpathForCurrentPlatform();
+   let binPath: string;
+ 
+diff --git a/npm/lib/node-install.ts b/npm/lib/node-install.ts
+index 8e30b1e..429c4ef 100644
+--- a/npm/lib/node-install.ts
++++ b/npm/lib/node-install.ts
+@@ -194,6 +194,15 @@ async function downloadDirectlyFromNPM(
+ }
+ 
+ async function checkAndPreparePackage(): Promise<void> {
++  if (process.env.WRANGLER_WORKERD_BINARY && fs.existsSync(process.env.WRANGLER_WORKERD_BINARY)) {
++    maybeOptimizePackage(process.env.WRANGLER_WORKERD_BINARY);
++    return;
++  }
++  const termuxFallback = path.join(process.env.HOME || "", ".local", "bin", "workerd");
++  if (process.platform === "android" && fs.existsSync(termuxFallback)) {
++    maybeOptimizePackage(termuxFallback);
++    return;
++  }
+   const { pkg, subpath } = pkgAndSubpathForCurrentPlatform();
+ 
+   let binPath: string;
+diff --git a/src/workerd/jsg/setup.c++ b/src/workerd/jsg/setup.c++
+index 037e96b..eeec6aa 100644
+--- a/src/workerd/jsg/setup.c++
++++ b/src/workerd/jsg/setup.c++
+@@ -17,7 +17,11 @@
+ 
+ #if !_WIN32
+ #include <cxxabi.h>
++#if defined(__ANDROID__)
++#include <sys/ucontext.h>
++#else
+ #include <ucontext.h>
++#endif
+ #endif
+ 
+ #ifdef WORKERD_ICU_DATA_EMBED

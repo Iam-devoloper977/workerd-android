@@ -1,0 +1,178 @@
+name: Weekly Android ARM64 workerd Build
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
+  workflow_dispatch:
+    inputs:
+      workerd_ref:
+        description: 'Upstream cloudflare/workerd tag/branch (leave blank for latest release)'
+        required: false
+        default: ''
+      force_build:
+        description: 'Force build even if release already exists'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - name: Free Disk Space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/julia* || true
+          docker system prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Checkout workerd-android Repository
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Determine Upstream Tag
+        id: resolve-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          USER_REF="${{ github.event.inputs.workerd_ref }}"
+          if [ -n "$USER_REF" ]; then
+            TAG="$USER_REF"
+          else
+            TAG=$(gh api repos/cloudflare/workerd/releases/latest --jq .tag_name)
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "[+] Target workerd tag: $TAG"
+
+          # Check if release already exists in current repo
+          EXISTS=$(gh release view "$TAG" -R "${{ github.repository }}" >/dev/null 2>&1 && echo "yes" || echo "no")
+          FORCE="${{ github.event.inputs.force_build }}"
+          if [ "$EXISTS" = "yes" ] && [ "$FORCE" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "[!] Release $TAG already exists. Skipping build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout cloudflare/workerd@${{ steps.resolve-tag.outputs.tag }}
+        if: steps.resolve-tag.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: cloudflare/workerd
+          ref: ${{ steps.resolve-tag.outputs.tag }}
+          path: workerd-src
+          fetch-depth: 1
+
+      - name: Apply Android Bionic Patch
+        if: steps.resolve-tag.outputs.skip != 'true'
+        working-directory: workerd-src
+        run: |
+          echo "[+] Applying patches/workerd-android-bionic.patch..."
+          git apply --verbose ../repo/patches/workerd-android-bionic.patch
+
+      - name: Set up Toolchain & Clang
+        if: steps.resolve-tag.outputs.skip != 'true'
+        working-directory: workerd-src
+        run: |
+          # Use workerd's runner setup if available, or install LLVM directly
+          if [ -d ./.github/actions/setup-runner ]; then
+            echo "[+] Using upstream setup-runner action dependencies..."
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm libc++-dev libc++abi-dev python3 libunwind-dev
+
+      - name: Install Bazelisk
+        if: steps.resolve-tag.outputs.skip != 'true'
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/bazel \
+            https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
+          sudo chmod +x /usr/local/bin/bazel
+          echo "[+] Bazel version: $(bazel --version)"
+
+      - name: Restore Bazel Disk Cache
+        if: steps.resolve-tag.outputs.skip != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/bazel-disk-cache
+          key: bazel-android-${{ steps.resolve-tag.outputs.tag }}-${{ github.run_id }}
+          restore-keys: |
+            bazel-android-${{ steps.resolve-tag.outputs.tag }}-
+            bazel-android-
+
+      - name: Build workerd (No TCMalloc, Bionic System Allocator)
+        if: steps.resolve-tag.outputs.skip != 'true'
+        working-directory: workerd-src
+        run: |
+          bazel build \
+            --disk_cache=~/bazel-disk-cache \
+            --config=release_android \
+            --strip=always \
+            --jobs=HOST_CPUS \
+            --@workerd//src/workerd/server:use_tcmalloc=False \
+            //src/workerd/server:workerd
+
+          mkdir -p ../artifacts
+          cp bazel-bin/src/workerd/server/workerd ../artifacts/workerd
+          chmod 755 ../artifacts/workerd
+          strip ../artifacts/workerd || true
+          ls -lh ../artifacts/workerd
+
+      - name: Save Bazel Disk Cache
+        if: steps.resolve-tag.outputs.skip != 'true' && always()
+        run: |
+          [ -d ~/bazel-disk-cache ] && find ~/bazel-disk-cache -size +100M -type f -delete || true
+      - if: steps.resolve-tag.outputs.skip != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/bazel-disk-cache
+          key: bazel-android-${{ steps.resolve-tag.outputs.tag }}-${{ github.run_id }}
+
+      - name: Run Test Suite (39-bit VA Emulation & Worker Verification)
+        if: steps.resolve-tag.outputs.skip != 'true'
+        run: |
+          bash repo/tests/run-tests.sh artifacts/workerd
+
+      - name: Package Release Assets
+        if: steps.resolve-tag.outputs.skip != 'true'
+        run: |
+          cd artifacts
+          tar -czvf workerd-android-arm64.tar.gz workerd
+          sha256sum workerd workerd-android-arm64.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        if: steps.resolve-tag.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+          NOTES="### Cloudflare workerd Native Android ARM64 Release ($TAG)
+
+- Built natively for **Android ARM64 inside Termux** without PRoot or Glibc.
+- **TCMalloc disabled** (\`use_tcmalloc=False\`): Resolves kernel aborts on 39-bit Virtual Address (VA) space (\`CONFIG_ARM64_VA_BITS=39\`).
+- Verified with embedded SQLite and Durable Objects under emulated 39-bit address limits.
+- Upstream source: [cloudflare/workerd@$TAG](https://github.com/cloudflare/workerd/releases/tag/$TAG)
+
+#### Quick Install in Termux:
+\`\`\`bash
+curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+\`\`\`"
+
+          gh release create "$TAG" \
+            artifacts/workerd-android-arm64.tar.gz \
+            artifacts/workerd \
+            artifacts/SHA256SUMS \
+            -R "${{ github.repository }}" \
+            --title "workerd $TAG (Android ARM64 Bionic)" \
+            --notes "$NOTES" \
+          || gh release upload "$TAG" \
+            artifacts/workerd-android-arm64.tar.gz \
+            artifacts/workerd \
+            artifacts/SHA256SUMS \
+            -R "${{ github.repository }}" --clobber
