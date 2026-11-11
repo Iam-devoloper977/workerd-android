@@ -12,17 +12,28 @@ jobs:
         run: |
           ARCH=$(uname -m)
           ZIG_URL=$(python3 -c "import urllib.request, json; data = json.loads(urllib.request.urlopen('https://ziglang.org/download/index.json').read()); print(data['master']['$ARCH-linux']['tarball'])")
-          echo "Downloading Zig from $ZIG_URL..."
           sudo mkdir -p /opt/zig
           curl -fsSL "$ZIG_URL" | sudo tar -xJ --strip-components=1 -C /opt/zig
           echo "/opt/zig" >> "$GITHUB_PATH"
-      - name: Test Zig cross-compilation for Android ARM64
+      - name: Test Zig cross-compilation with Android NDK sysroot & musl
         run: |
           export PATH="/opt/zig:$PATH"
           zig version
           echo '#include <stdio.h>' > hello.c
-          echo 'int main() { printf("Hello from Android ARM64 Bionic via Zig!\\n"); return 0; }' >> hello.c
-          zig cc -target aarch64-linux-android.29 -O2 hello.c -o hello
-          file hello
-          readelf -h hello
-          readelf -l hello | grep interpreter
+          echo 'int main() { printf("Hello from Android ARM64!\\n"); return 0; }' >> hello.c
+
+          echo "=== 1. Find preinstalled NDK sysroot ==="
+          ls -d /usr/local/lib/android/sdk/ndk/* || true
+          NDK_PATH=$(ls -d /usr/local/lib/android/sdk/ndk/* | tail -n 1)
+          SYSROOT="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          echo "Using sysroot: $SYSROOT"
+
+          echo "=== 2. Zig compile with Android NDK sysroot ==="
+          zig cc -target aarch64-linux-android.29 --sysroot "$SYSROOT" -O2 hello.c -o hello-bionic
+          file hello-bionic
+          readelf -l hello-bionic | grep interpreter
+
+          echo "=== 3. Zig compile with static musl ==="
+          zig cc -target aarch64-linux-musl -static -O2 hello.c -o hello-musl
+          file hello-musl
+EOF
