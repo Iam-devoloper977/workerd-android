@@ -1,6 +1,6 @@
-name: "Weekly Android ARM64 workerd Build"
+name: Weekly Android ARM64 workerd Build
 
-"on":
+on:
   schedule:
     - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
   workflow_dispatch:
@@ -122,11 +122,13 @@ jobs:
           strip ../artifacts/workerd || true
           ls -lh ../artifacts/workerd
 
-      - name: Save Bazel Disk Cache
-        if: steps.resolve-tag.outputs.skip != 'true' && always()
+      - name: Clean Large Files Before Cache Save
+        if: always() && steps.resolve-tag.outputs.skip != 'true'
         run: |
           [ -d ~/bazel-disk-cache ] && find ~/bazel-disk-cache -size +100M -type f -delete || true
-      - if: steps.resolve-tag.outputs.skip != 'true' && always()
+
+      - name: Save Bazel Disk Cache
+        if: always() && steps.resolve-tag.outputs.skip != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/bazel-disk-cache
