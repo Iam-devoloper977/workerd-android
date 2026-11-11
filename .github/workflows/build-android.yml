@@ -1,9 +1,15 @@
 name: build-workerd-android
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: "0 0 * * 0"
+  workflow_dispatch:
+    inputs:
+      workerd_ref:
+        description: "workerd git tag to build (leave blank for latest release)"
+        required: false
+        default: ""
+
 permissions:
   contents: write
 
@@ -113,10 +119,7 @@ WRAPPER'
             'build:release_android --config=android' \
             'build:release_android --linkopt="-Wl,-O2"' >> .bazelrc
 
-      - name: Set up toolchain (workerd setup-runner)
-        uses: ./.github/actions/setup-runner
-        with:
-          GOOGLESOURCE_COOKIE: ''
+          git config core.hooksPath githooks || true
 
       - name: Install bazelisk
         run: |
