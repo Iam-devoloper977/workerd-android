@@ -78,26 +78,14 @@ jobs:
           echo "[+] Applying C++ and npm compatibility patch..."
           git apply --verbose workerd-android/patches/workerd-android-bionic.patch
           
-          echo "[+] Appending Android Bionic configuration to .bazelrc..."
+          echo "[+] Appending Android ARM64 configuration to .bazelrc..."
           printf '%s\n' \
             '' \
-            '# --- Android ARM64 Bionic libc configuration ---' \
-            'build:android --config=unix' \
+            '# --- Android ARM64 (No TCMalloc) configuration ---' \
+            'build:android --config=release_linux' \
             'build:android --@workerd//src/workerd/server:use_tcmalloc=False' \
             'build:android --@v8//:v8_use_perfetto=False' \
-            'build:android --copt=-D__ANDROID__' \
-            'build:android --copt=-D__ANDROID_API__=29' \
-            'build:android --copt=-D_GNU_SOURCE' \
-            'build:android --copt=-fPIC' \
-            'build:android --linkopt=-fuse-ld=lld' \
-            'build:android --linkopt=-Wl,-z,nocopyreloc' \
-            'build:android --linkopt=-Wl,--hash-style=both' \
-            'build:android --linkopt=-llog' \
-            'build:android --strip=always' \
-            '' \
-            'build:release_android --config=release_unix' \
-            'build:release_android --config=android' \
-            'build:release_android --linkopt="-Wl,-O2"' >> .bazelrc
+            'build:android --strip=always' >> .bazelrc
 
           git config core.hooksPath githooks || true
 
@@ -122,7 +110,7 @@ jobs:
         timeout-minutes: 320
         run: |
           bazel build \
-            --config=ci --config=release_android --strip=always \
+            --config=ci --config=android \
             --jobs=HOST_CPUS \
             --@workerd//src/workerd/server:use_tcmalloc=False \
             //src/workerd/server:workerd
@@ -159,9 +147,13 @@ jobs:
 
       - name: Package Release Assets
         run: |
+          sudo apt-get update && sudo apt-get install -y patchelf
           cd "$RUNNER_TEMP/artifacts"
-          tar -czvf workerd-android-arm64.tar.gz workerd
-          sha256sum workerd workerd-android-arm64.tar.gz > SHA256SUMS
+          cp workerd workerd-linux-arm64
+          # Set Android Bionic PT_INTERP for native execution in Termux
+          patchelf --set-interpreter /system/bin/linker64 workerd || true
+          tar -czvf workerd-android-arm64.tar.gz workerd workerd-linux-arm64
+          sha256sum workerd workerd-linux-arm64 workerd-android-arm64.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Publish GitHub Release
@@ -185,6 +177,7 @@ jobs:
           gh release create "$TAG" \
             "$RUNNER_TEMP/artifacts/workerd-android-arm64.tar.gz" \
             "$RUNNER_TEMP/artifacts/workerd" \
+            "$RUNNER_TEMP/artifacts/workerd-linux-arm64" \
             "$RUNNER_TEMP/artifacts/SHA256SUMS" \
             -R "${{ github.repository }}" \
             --title "workerd $TAG (Android ARM64 Bionic)" \
@@ -192,5 +185,6 @@ jobs:
           || gh release upload "$TAG" \
             "$RUNNER_TEMP/artifacts/workerd-android-arm64.tar.gz" \
             "$RUNNER_TEMP/artifacts/workerd" \
+            "$RUNNER_TEMP/artifacts/workerd-linux-arm64" \
             "$RUNNER_TEMP/artifacts/SHA256SUMS" \
             -R "${{ github.repository }}" --clobber
