@@ -101,25 +101,25 @@ jobs:
           
           echo "[+] Appending Android Bionic configuration to .bazelrc..."
           cat << 'EOF' >> .bazelrc
-
-# --- Android ARM64 Bionic libc configuration ---
-build:android --config=unix
-build:android --@workerd//src/workerd/server:use_tcmalloc=False
-build:android --@v8//:v8_use_perfetto=False
-build:android --copt=-D__ANDROID__
-build:android --copt=-D__ANDROID_API__=29
-build:android --copt=-D_GNU_SOURCE
-build:android --copt=-fPIC
-build:android --linkopt=-fuse-ld=lld
-build:android --linkopt=-Wl,-z,nocopyreloc
-build:android --linkopt=-Wl,--hash-style=both
-build:android --linkopt=-llog
-build:android --strip=always
-
-build:release_android --config=release_unix
-build:release_android --config=android
-build:release_android --linkopt="-Wl,-O2"
-EOF
+          
+          # --- Android ARM64 Bionic libc configuration ---
+          build:android --config=unix
+          build:android --@workerd//src/workerd/server:use_tcmalloc=False
+          build:android --@v8//:v8_use_perfetto=False
+          build:android --copt=-D__ANDROID__
+          build:android --copt=-D__ANDROID_API__=29
+          build:android --copt=-D_GNU_SOURCE
+          build:android --copt=-fPIC
+          build:android --linkopt=-fuse-ld=lld
+          build:android --linkopt=-Wl,-z,nocopyreloc
+          build:android --linkopt=-Wl,--hash-style=both
+          build:android --linkopt=-llog
+          build:android --strip=always
+          
+          build:release_android --config=release_unix
+          build:release_android --config=android
+          build:release_android --linkopt="-Wl,-O2"
+          EOF
 
       - name: Set up toolchain (workerd setup-runner)
         uses: ./workerd-src/.github/actions/setup-runner
