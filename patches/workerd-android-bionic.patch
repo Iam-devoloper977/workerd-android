@@ -2,7 +2,7 @@ diff --git a/.bazelrc b/.bazelrc
 index e3915bc..6d43e5a 100644
 --- a/.bazelrc
 +++ b/.bazelrc
-@@ -194,6 +194,27 @@ build:release_linux --linkopt="-Wl,-O2"
+@@ -194,6 +194,34 @@ build:release_linux --linkopt="-Wl,-O2"
  build:release_macos --config=release_unix
  build:release_macos --linkopt="-Wl,-no_data_in_code_info"
  build:release_macos --linkopt="-Wl,-no_function_starts"
@@ -22,6 +22,13 @@ index e3915bc..6d43e5a 100644
 +build:android --linkopt=-Wl,--hash-style=both
 +build:android --linkopt=-llog
 +build:android --strip=always
++
++# Zig latest cross-compilation toolchain integration
++build:zig --config=android
++build:zig --repo_env=CC="/opt/zig-toolchain/clang"
++build:zig --repo_env=CXX="/opt/zig-toolchain/clang++"
++build:zig --repo_env=AR="/opt/zig-toolchain/ar"
++build:zig --repo_env=RANLIB="/opt/zig-toolchain/ranlib"
 +
 +build:release_android --config=release_unix
 +build:release_android --config=android

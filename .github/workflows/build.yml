@@ -1,4 +1,4 @@
-name: workerd
+name: build-workerd-android
 
 on:
   schedule:
@@ -6,10 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       workerd_ref:
-        description: "workerd git tag to build (leave blank for latest release)"
+        description: 'Upstream cloudflare/workerd tag (leave blank for latest release)'
         required: false
-        type: string
-        default: "v1.20261110.1"
+        default: ''
 
 permissions:
   contents: write
@@ -44,21 +43,63 @@ jobs:
             TAG=$(gh api repos/cloudflare/workerd/releases/latest --jq .tag_name)
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "[+] Resolved target tag: $TAG"
+          echo "[+] Building target tag: $TAG"
+
+      - name: Install latest Zig cross-compiler
+        run: |
+          ARCH=$(uname -m)
+          ZIG_URL=$(python3 -c "import urllib.request, json; data = json.loads(urllib.request.urlopen('https://ziglang.org/download/index.json').read()); print(data['master']['$ARCH-linux']['tarball'])")
+          echo "[+] Downloading latest Zig from $ZIG_URL..."
+          sudo mkdir -p /opt/zig
+          curl -fsSL "$ZIG_URL" | sudo tar -xJ --strip-components=1 -C /opt/zig
+          echo "/opt/zig" >> "$GITHUB_PATH"
+          export PATH="/opt/zig:$PATH"
+          zig version
+
+          echo "[+] Setting up Zig cross-compilation toolchain wrappers..."
+          sudo mkdir -p /opt/zig-toolchain
+          
+          # Zig C wrapper
+          sudo tee /opt/zig-toolchain/clang << 'EOF' >/dev/null
+          #!/usr/bin/env bash
+          exec /opt/zig/zig cc -target aarch64-linux-android.29 "$@"
+          EOF
+          
+          # Zig C++ wrapper
+          sudo tee /opt/zig-toolchain/clang++ << 'EOF' >/dev/null
+          #!/usr/bin/env bash
+          exec /opt/zig/zig c++ -target aarch64-linux-android.29 "$@"
+          EOF
+          
+          # Zig AR & RANLIB wrappers
+          sudo tee /opt/zig-toolchain/ar << 'EOF' >/dev/null
+          #!/usr/bin/env bash
+          exec /opt/zig/zig ar "$@"
+          EOF
+          
+          sudo tee /opt/zig-toolchain/ranlib << 'EOF' >/dev/null
+          #!/usr/bin/env bash
+          exec /opt/zig/zig ranlib "$@"
+          EOF
+          
+          sudo chmod +x /opt/zig-toolchain/*
 
       - name: Checkout cloudflare/workerd@${{ steps.resolve.outputs.tag }}
         uses: actions/checkout@v4
         with:
           repository: cloudflare/workerd
           ref: ${{ steps.resolve.outputs.tag }}
+          path: workerd-src
           fetch-depth: 1
           show-progress: false
 
       - name: Apply Android Bionic patch
+        working-directory: workerd-src
         run: |
           git apply --verbose "$GITHUB_WORKSPACE/repo/patches/workerd-android-bionic.patch"
 
       - name: Set up toolchain (workerd setup-runner)
+        working-directory: workerd-src
         uses: ./.github/actions/setup-runner
         with:
           GOOGLESOURCE_COOKIE: ''
@@ -68,7 +109,7 @@ jobs:
           sudo curl -fsSL -o /usr/local/bin/bazel \
             https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
           sudo chmod +x /usr/local/bin/bazel
-          echo "wanted bazel: $(cat .bazelversion)"; bazel --version
+          echo "wanted bazel: $(cat workerd-src/.bazelversion)"; bazel --version
           nproc; free -g; df -h /
 
       - name: Restore Bazel disk cache
@@ -82,30 +123,31 @@ jobs:
 
       - name: Bazel build //src/workerd/server:workerd (No TCMalloc)
         timeout-minutes: 320
+        working-directory: workerd-src
         run: |
           bazel build \
-            --config=ci --config=release_linux --strip=always \
+            --config=ci --config=release_android --strip=always \
             --jobs=HOST_CPUS \
             --@workerd//src/workerd/server:use_tcmalloc=False \
             //src/workerd/server:workerd
 
-      - name: Save Bazel disk cache
+      - name: Clean large cache files
         if: always()
         run: |
           [ -d ~/bazel-disk-cache ] && find ~/bazel-disk-cache -size +100M -type f -delete || true
           du -sh ~/bazel-disk-cache || true
 
-      - name: Save Bazel Cache
+      - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/bazel-disk-cache
           key: bazel-android-arm64-${{ steps.resolve.outputs.tag }}-${{ github.run_id }}
 
-      - name: Verify binary and 39-bit VA compliance
+      - name: Verify binary & 39-bit VA compliance
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
-          cp bazel-bin/src/workerd/server/workerd "$RUNNER_TEMP/artifacts/workerd"
+          cp workerd-src/bazel-bin/src/workerd/server/workerd "$RUNNER_TEMP/artifacts/workerd"
           chmod +x "$RUNNER_TEMP/artifacts/workerd"
           strip "$RUNNER_TEMP/artifacts/workerd" || true
           
@@ -131,17 +173,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.resolve.outputs.tag }}"
-          NOTES="### Cloudflare workerd Native Android ARM64 Release ($TAG)
+          cat << 'EOF' > "$RUNNER_TEMP/release_notes.md"
+          ### Cloudflare workerd Native Android ARM64 Release
 
-- Built natively for **Android ARM64 inside Termux** without PRoot or Glibc.
-- **TCMalloc disabled** (\`use_tcmalloc=False\`): Resolves kernel aborts on 39-bit Virtual Address (VA) space (\`CONFIG_ARM64_VA_BITS=39\`).
-- Verified with embedded SQLite and Durable Objects under emulated 39-bit address limits.
-- Upstream source: [cloudflare/workerd@$TAG](https://github.com/cloudflare/workerd/releases/tag/$TAG)
+          - Compiled for **Android ARM64 inside Termux (Bionic libc)** without PRoot or Glibc.
+          - Cross-compiled with **Zig latest** toolchain.
+          - **TCMalloc disabled** (`use_tcmalloc=False`): Resolves kernel aborts on 39-bit Virtual Address (VA) space (`CONFIG_ARM64_VA_BITS=39`).
+          - Verified with embedded SQLite and Durable Objects under emulated 39-bit address limits.
 
-#### Quick Install in Termux:
-\`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
-\`\`\`"
+          #### Quick Install in Termux:
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          ```
+          EOF
 
           gh release create "$TAG" \
             "$RUNNER_TEMP/artifacts/workerd-android-arm64.tar.gz" \
@@ -149,7 +193,7 @@ curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/insta
             "$RUNNER_TEMP/artifacts/SHA256SUMS" \
             -R "${{ github.repository }}" \
             --title "workerd $TAG (Android ARM64 Bionic)" \
-            --notes "$NOTES" \
+            --notes-file "$RUNNER_TEMP/release_notes.md" \
           || gh release upload "$TAG" \
             "$RUNNER_TEMP/artifacts/workerd-android-arm64.tar.gz" \
             "$RUNNER_TEMP/artifacts/workerd" \
