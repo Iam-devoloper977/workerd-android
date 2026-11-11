@@ -1,17 +1,14 @@
 name: Build workerd arm64 (Android Bionic)
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
     inputs:
       workerd_ref:
-        description: "workerd git tag to build (e.g. v1.20261110.1)"
-        required: true
-        default: "v1.20261110.1"
+        description: "workerd git tag to build (leave blank for latest release)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -20,9 +17,6 @@ jobs:
   build:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
-    env:
-      REF: ${{ inputs.workerd_ref || 'v1.20261110.1' }}
-      CACHE_KEY: bazel-android-arm64-${{ inputs.workerd_ref || 'v1.20261110.1' }}-${{ github.run_id }}
     steps:
       - name: Free disk space
         run: |
@@ -37,11 +31,25 @@ jobs:
         with:
           path: repo
 
-      - name: Checkout cloudflare/workerd@${{ env.REF }}
+      - name: Determine Upstream Tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          USER_REF="${{ github.event.inputs.workerd_ref }}"
+          if [ -n "$USER_REF" ]; then
+            TAG="$USER_REF"
+          else
+            TAG=$(gh api repos/cloudflare/workerd/releases/latest --jq .tag_name)
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "[+] Resolved target tag: $TAG"
+
+      - name: Checkout cloudflare/workerd@${{ steps.resolve.outputs.tag }}
         uses: actions/checkout@v4
         with:
           repository: cloudflare/workerd
-          ref: ${{ env.REF }}
+          ref: ${{ steps.resolve.outputs.tag }}
           fetch-depth: 1
           show-progress: false
 
@@ -66,9 +74,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/bazel-disk-cache
-          key: ${{ env.CACHE_KEY }}
+          key: bazel-android-arm64-${{ steps.resolve.outputs.tag }}-${{ github.run_id }}
           restore-keys: |
-            bazel-android-arm64-${{ env.REF }}-
+            bazel-android-arm64-${{ steps.resolve.outputs.tag }}-
             bazel-android-arm64-
 
       - name: Bazel build //src/workerd/server:workerd (No TCMalloc)
@@ -90,7 +98,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/bazel-disk-cache
-          key: ${{ env.CACHE_KEY }}
+          key: bazel-android-arm64-${{ steps.resolve.outputs.tag }}-${{ github.run_id }}
 
       - name: Verify binary and 39-bit VA compliance
         run: |
@@ -120,7 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ env.REF }}"
+          TAG="${{ steps.resolve.outputs.tag }}"
           NOTES="### Cloudflare workerd Native Android ARM64 Release ($TAG)
 
 - Built natively for **Android ARM64 inside Termux** without PRoot or Glibc.
