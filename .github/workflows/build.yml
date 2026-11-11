@@ -26,11 +26,6 @@ jobs:
           docker system prune -af >/dev/null 2>&1 || true
           df -h /
 
-      - name: Checkout workerd-android Repo
-        uses: actions/checkout@v4
-        with:
-          path: repo
-
       - name: Determine Upstream Tag
         id: resolve
         env:
@@ -44,6 +39,20 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "[+] Building target tag: $TAG"
+
+      - name: Checkout cloudflare/workerd@${{ steps.resolve.outputs.tag }}
+        uses: actions/checkout@v4
+        with:
+          repository: cloudflare/workerd
+          ref: ${{ steps.resolve.outputs.tag }}
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Checkout workerd-android Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          path: workerd-android
 
       - name: Install latest Zig cross-compiler
         run: |
@@ -84,45 +93,35 @@ jobs:
           
           sudo chmod +x /opt/zig-toolchain/*
 
-      - name: Checkout cloudflare/workerd@${{ steps.resolve.outputs.tag }}
-        uses: actions/checkout@v4
-        with:
-          repository: cloudflare/workerd
-          ref: ${{ steps.resolve.outputs.tag }}
-          path: workerd-src
-          fetch-depth: 1
-          show-progress: false
-
       - name: Apply Android Bionic patch
-        working-directory: workerd-src
         run: |
           echo "[+] Applying C++ and npm compatibility patch..."
-          git apply --verbose "$GITHUB_WORKSPACE/repo/patches/workerd-android-bionic.patch"
+          git apply --verbose workerd-android/patches/workerd-android-bionic.patch
           
           echo "[+] Appending Android Bionic configuration to .bazelrc..."
           cat << 'EOF' >> .bazelrc
-          
-          # --- Android ARM64 Bionic libc configuration ---
-          build:android --config=unix
-          build:android --@workerd//src/workerd/server:use_tcmalloc=False
-          build:android --@v8//:v8_use_perfetto=False
-          build:android --copt=-D__ANDROID__
-          build:android --copt=-D__ANDROID_API__=29
-          build:android --copt=-D_GNU_SOURCE
-          build:android --copt=-fPIC
-          build:android --linkopt=-fuse-ld=lld
-          build:android --linkopt=-Wl,-z,nocopyreloc
-          build:android --linkopt=-Wl,--hash-style=both
-          build:android --linkopt=-llog
-          build:android --strip=always
-          
-          build:release_android --config=release_unix
-          build:release_android --config=android
-          build:release_android --linkopt="-Wl,-O2"
-          EOF
+
+# --- Android ARM64 Bionic libc configuration ---
+build:android --config=unix
+build:android --@workerd//src/workerd/server:use_tcmalloc=False
+build:android --@v8//:v8_use_perfetto=False
+build:android --copt=-D__ANDROID__
+build:android --copt=-D__ANDROID_API__=29
+build:android --copt=-D_GNU_SOURCE
+build:android --copt=-fPIC
+build:android --linkopt=-fuse-ld=lld
+build:android --linkopt=-Wl,-z,nocopyreloc
+build:android --linkopt=-Wl,--hash-style=both
+build:android --linkopt=-llog
+build:android --strip=always
+
+build:release_android --config=release_unix
+build:release_android --config=android
+build:release_android --linkopt="-Wl,-O2"
+EOF
 
       - name: Set up toolchain (workerd setup-runner)
-        uses: ./workerd-src/.github/actions/setup-runner
+        uses: ./.github/actions/setup-runner
         with:
           GOOGLESOURCE_COOKIE: ''
 
@@ -131,7 +130,7 @@ jobs:
           sudo curl -fsSL -o /usr/local/bin/bazel \
             https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
           sudo chmod +x /usr/local/bin/bazel
-          echo "wanted bazel: $(cat workerd-src/.bazelversion)"; bazel --version
+          echo "wanted bazel: $(cat .bazelversion)"; bazel --version
           nproc; free -g; df -h /
 
       - name: Restore Bazel disk cache
@@ -145,7 +144,6 @@ jobs:
 
       - name: Bazel build //src/workerd/server:workerd (No TCMalloc)
         timeout-minutes: 320
-        working-directory: workerd-src
         run: |
           bazel build \
             --config=ci --config=release_android --strip=always \
@@ -169,7 +167,7 @@ jobs:
       - name: Verify binary & 39-bit VA compliance
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
-          cp workerd-src/bazel-bin/src/workerd/server/workerd "$RUNNER_TEMP/artifacts/workerd"
+          cp bazel-bin/src/workerd/server/workerd "$RUNNER_TEMP/artifacts/workerd"
           chmod +x "$RUNNER_TEMP/artifacts/workerd"
           strip "$RUNNER_TEMP/artifacts/workerd" || true
           
@@ -181,7 +179,7 @@ jobs:
           echo "[+] Verified: TCMalloc successfully omitted."
 
           # Run full test suite with 39-bit VA emulation shim
-          bash "$GITHUB_WORKSPACE/repo/tests/run-tests.sh" "$RUNNER_TEMP/artifacts/workerd"
+          bash workerd-android/tests/run-tests.sh "$RUNNER_TEMP/artifacts/workerd"
 
       - name: Package Release Assets
         run: |
