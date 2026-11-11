@@ -9,11 +9,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install latest Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: latest
+        run: |
+          ARCH=$(uname -m)
+          ZIG_URL=$(python3 -c "import urllib.request, json; data = json.loads(urllib.request.urlopen('https://ziglang.org/download/index.json').read()); print(data['master']['$ARCH-linux']['tarball'])")
+          echo "Downloading Zig from $ZIG_URL..."
+          sudo mkdir -p /opt/zig
+          curl -fsSL "$ZIG_URL" | sudo tar -xJ --strip-components=1 -C /opt/zig
+          echo "/opt/zig" >> "$GITHUB_PATH"
       - name: Test Zig cross-compilation for Android ARM64
         run: |
+          export PATH="/opt/zig:$PATH"
           zig version
           echo '#include <stdio.h>' > hello.c
           echo 'int main() { printf("Hello from Android ARM64 Bionic via Zig!\\n"); return 0; }' >> hello.c
