@@ -1,6 +1,6 @@
 name: build-workerd-android
 
-on:
+"on":
   schedule:
     - cron: "0 0 * * 0"
   workflow_dispatch:
@@ -67,30 +67,10 @@ jobs:
 
           echo "[+] Setting up Zig cross-compilation toolchain wrappers..."
           sudo mkdir -p /opt/zig-toolchain
-          
-          # Zig C wrapper
-          sudo bash -c 'cat > /opt/zig-toolchain/clang << "WRAPPER"
-#!/usr/bin/env bash
-exec /opt/zig/zig cc -target aarch64-linux-android.29 "$@"
-WRAPPER'
-          
-          # Zig C++ wrapper
-          sudo bash -c 'cat > /opt/zig-toolchain/clang++ << "WRAPPER"
-#!/usr/bin/env bash
-exec /opt/zig/zig c++ -target aarch64-linux-android.29 "$@"
-WRAPPER'
-          
-          # Zig AR & RANLIB wrappers
-          sudo bash -c 'cat > /opt/zig-toolchain/ar << "WRAPPER"
-#!/usr/bin/env bash
-exec /opt/zig/zig ar "$@"
-WRAPPER'
-          
-          sudo bash -c 'cat > /opt/zig-toolchain/ranlib << "WRAPPER"
-#!/usr/bin/env bash
-exec /opt/zig/zig ranlib "$@"
-WRAPPER'
-          
+          sudo printf '#!/usr/bin/env bash\nexec /opt/zig/zig cc -target aarch64-linux-android.29 "$@"\n' | sudo tee /opt/zig-toolchain/clang > /dev/null
+          sudo printf '#!/usr/bin/env bash\nexec /opt/zig/zig c++ -target aarch64-linux-android.29 "$@"\n' | sudo tee /opt/zig-toolchain/clang++ > /dev/null
+          sudo printf '#!/usr/bin/env bash\nexec /opt/zig/zig ar "$@"\n' | sudo tee /opt/zig-toolchain/ar > /dev/null
+          sudo printf '#!/usr/bin/env bash\nexec /opt/zig/zig ranlib "$@"\n' | sudo tee /opt/zig-toolchain/ranlib > /dev/null
           sudo chmod +x /opt/zig-toolchain/*
 
       - name: Apply Android Bionic patch
@@ -138,7 +118,7 @@ WRAPPER'
             bazel-android-arm64-${{ steps.resolve.outputs.tag }}-
             bazel-android-arm64-
 
-      - name: Bazel build //src/workerd/server:workerd (No TCMalloc)
+      - name: "Bazel build //src/workerd/server:workerd (No TCMalloc)"
         timeout-minutes: 320
         run: |
           bazel build \
@@ -160,7 +140,7 @@ WRAPPER'
           path: ~/bazel-disk-cache
           key: bazel-android-arm64-${{ steps.resolve.outputs.tag }}-${{ github.run_id }}
 
-      - name: Verify binary & 39-bit VA compliance
+      - name: "Verify binary and 39-bit VA compliance"
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
           cp bazel-bin/src/workerd/server/workerd "$RUNNER_TEMP/artifacts/workerd"
