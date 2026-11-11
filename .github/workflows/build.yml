@@ -1,15 +1,9 @@
 name: build-workerd-android
 
 on:
-  schedule:
-    - cron: '0 0 * * 0'
   workflow_dispatch:
-    inputs:
-      workerd_ref:
-        description: 'Upstream cloudflare/workerd tag (leave blank for latest release)'
-        required: false
-        default: ''
-
+  schedule:
+    - cron: "0 0 * * 0"
 permissions:
   contents: write
 
