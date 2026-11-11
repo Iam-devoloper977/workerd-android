@@ -95,7 +95,8 @@ jobs:
           [ -d ~/bazel-disk-cache ] && find ~/bazel-disk-cache -size +100M -type f -delete || true
           du -sh ~/bazel-disk-cache || true
 
-      - if: always()
+      - name: Save Bazel Cache
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/bazel-disk-cache
