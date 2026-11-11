@@ -1,18 +1,19 @@
-name: Weekly Android ARM64 workerd Build
+name: build
 
 on:
+  # Run every Sunday at midnight UTC
   schedule:
-    - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
+    - cron: "0 0 * * 0"
   workflow_dispatch:
     inputs:
       workerd_ref:
-        description: 'Upstream cloudflare/workerd tag/branch (leave blank for latest release)'
+        description: "Upstream cloudflare/workerd tag (e.g. v1.20261110.1; leave blank for latest release)"
         required: false
-        default: ''
+        default: ""
       force_build:
-        description: 'Force build even if release already exists'
+        description: "Force build even if release already exists"
         required: false
-        default: 'false'
+        default: "false"
 
 permissions:
   contents: write
@@ -79,10 +80,6 @@ jobs:
         if: steps.resolve-tag.outputs.skip != 'true'
         working-directory: workerd-src
         run: |
-          # Use workerd's runner setup if available, or install LLVM directly
-          if [ -d ./.github/actions/setup-runner ]; then
-            echo "[+] Using upstream setup-runner action dependencies..."
-          fi
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang lld llvm libc++-dev libc++abi-dev python3 libunwind-dev
 
