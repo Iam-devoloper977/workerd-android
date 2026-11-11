@@ -36,4 +36,3 @@ jobs:
           echo "=== 3. Zig compile with static musl ==="
           zig cc -target aarch64-linux-musl -static -O2 hello.c -o hello-musl
           file hello-musl
-EOF
