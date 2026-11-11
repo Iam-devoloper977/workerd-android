@@ -1,6 +1,6 @@
-name: Weekly Android ARM64 workerd Build
+name: "Weekly Android ARM64 workerd Build"
 
-on:
+"on":
   schedule:
     - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
   workflow_dispatch:
@@ -12,8 +12,7 @@ on:
       force_build:
         description: 'Force build even if release already exists'
         required: false
-        type: boolean
-        default: false
+        default: 'false'
 
 permissions:
   contents: write
