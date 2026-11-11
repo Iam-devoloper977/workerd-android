@@ -99,8 +99,7 @@ jobs:
           git apply --verbose "$GITHUB_WORKSPACE/repo/patches/workerd-android-bionic.patch"
 
       - name: Set up toolchain (workerd setup-runner)
-        working-directory: workerd-src
-        uses: ./.github/actions/setup-runner
+        uses: ./workerd-src/.github/actions/setup-runner
         with:
           GOOGLESOURCE_COOKIE: ''
 
