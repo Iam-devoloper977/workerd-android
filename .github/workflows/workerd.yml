@@ -1,4 +1,4 @@
-name: Build workerd arm64 (Android Bionic)
+name: workerd
 
 on:
   schedule:
@@ -8,7 +8,8 @@ on:
       workerd_ref:
         description: "workerd git tag to build (leave blank for latest release)"
         required: false
-        default: ""
+        type: string
+        default: "v1.20261110.1"
 
 permissions:
   contents: write
