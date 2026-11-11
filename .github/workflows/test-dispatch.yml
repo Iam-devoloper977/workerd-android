@@ -1,15 +1,23 @@
-name: test-dispatch
+name: test-zig-cross
 
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Test tag'
-        required: false
-        default: 'v1.0.0'
 
 jobs:
-  run:
+  test-zig:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Tag is ${{ github.event.inputs.tag }}"
+      - uses: actions/checkout@v4
+      - name: Install latest Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: latest
+      - name: Test Zig cross-compilation for Android ARM64
+        run: |
+          zig version
+          echo '#include <stdio.h>' > hello.c
+          echo 'int main() { printf("Hello from Android ARM64 Bionic via Zig!\\n"); return 0; }' >> hello.c
+          zig cc -target aarch64-linux-android.29 -O2 hello.c -o hello
+          file hello
+          readelf -h hello
+          readelf -l hello | grep interpreter
