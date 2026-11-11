@@ -43,11 +43,32 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 curl -fL --progress-bar "$DOWNLOAD_URL" -o "$TMP_DIR/workerd.tar.gz"
 tar -xzf "$TMP_DIR/workerd.tar.gz" -C "$TMP_DIR"
 
+REAL_BIN="${TARGET_DIR}/workerd.bin"
+
 if [ -f "$TMP_DIR/workerd" ]; then
-  mv "$TMP_DIR/workerd" "$TARGET_BIN"
+  mv "$TMP_DIR/workerd" "$REAL_BIN"
 elif [ -f "$TMP_DIR/workerd-linux-arm64" ]; then
-  mv "$TMP_DIR/workerd-linux-arm64" "$TARGET_BIN"
+  mv "$TMP_DIR/workerd-linux-arm64" "$REAL_BIN"
 fi
+chmod +x "$REAL_BIN"
+
+# Ensure glibc-runner is present if needed for transparent execution in Termux
+if ! command -v grun >/dev/null 2>&1 && command -v pkg >/dev/null 2>&1; then
+  echo "[+] Ensuring glibc-runner is installed in Termux..."
+  pkg install -y glibc-runner >/dev/null 2>&1 || true
+fi
+
+cat > "$TARGET_BIN" << 'WRAPPER'
+#!/usr/bin/env bash
+REAL_BIN="${HOME}/.local/bin/workerd.bin"
+if command -v grun >/dev/null 2>&1; then
+  exec grun "$REAL_BIN" "$@"
+elif [ -x /system/bin/linker64 ]; then
+  exec /system/bin/linker64 "$REAL_BIN" "$@"
+else
+  exec "$REAL_BIN" "$@"
+fi
+WRAPPER
 chmod +x "$TARGET_BIN"
 
 echo "[+] Installed binary to $TARGET_BIN"
@@ -77,27 +98,13 @@ export PATH="$TARGET_DIR:$PATH"
 
 echo ""
 echo "[+] Verifying workerd binary..."
-if "$TARGET_BIN" --version 2>/dev/null; then
+if "$TARGET_BIN" --version; then
   echo ""
   echo "=========================================================="
   echo "🎉 Installation Successful!"
   echo "Native workerd is ready. You can now run:"
   echo "    npx wrangler dev"
-  echo "without PRoot, Glibc shims, or 39-bit VA kernel aborts."
-  echo "=========================================================="
-elif [ -x /system/bin/linker64 ] && /system/bin/linker64 "$TARGET_BIN" --version >/dev/null 2>&1; then
-  mv "$TARGET_BIN" "${TARGET_BIN}.real"
-  cat > "$TARGET_BIN" << 'WRAPPER'
-#!/usr/bin/env bash
-exec /system/bin/linker64 "${BASH_SOURCE[0]}.real" "$@"
-WRAPPER
-  chmod +x "$TARGET_BIN" "${TARGET_BIN}.real"
-  echo ""
-  echo "=========================================================="
-  echo "🎉 Installation Successful (configured with Bionic linker64 wrapper)!"
-  echo "Native workerd is ready. You can now run:"
-  echo "    npx wrangler dev"
-  echo "without PRoot, Glibc shims, or 39-bit VA kernel aborts."
+  echo "without PRoot or 39-bit VA kernel aborts."
   echo "=========================================================="
 else
   echo "[-] Warning: Failed to execute $TARGET_BIN."
