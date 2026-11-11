@@ -40,7 +40,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "[+] Building target tag: $TAG"
 
-      - name: Checkout cloudflare/workerd@${{ steps.resolve.outputs.tag }}
+      - name: Checkout cloudflare/workerd
         uses: actions/checkout@v4
         with:
           repository: cloudflare/workerd
@@ -69,27 +69,27 @@ jobs:
           sudo mkdir -p /opt/zig-toolchain
           
           # Zig C wrapper
-          sudo tee /opt/zig-toolchain/clang << 'EOF' >/dev/null
-          #!/usr/bin/env bash
-          exec /opt/zig/zig cc -target aarch64-linux-android.29 "$@"
-          EOF
+          sudo bash -c 'cat > /opt/zig-toolchain/clang << "WRAPPER"
+#!/usr/bin/env bash
+exec /opt/zig/zig cc -target aarch64-linux-android.29 "$@"
+WRAPPER'
           
           # Zig C++ wrapper
-          sudo tee /opt/zig-toolchain/clang++ << 'EOF' >/dev/null
-          #!/usr/bin/env bash
-          exec /opt/zig/zig c++ -target aarch64-linux-android.29 "$@"
-          EOF
+          sudo bash -c 'cat > /opt/zig-toolchain/clang++ << "WRAPPER"
+#!/usr/bin/env bash
+exec /opt/zig/zig c++ -target aarch64-linux-android.29 "$@"
+WRAPPER'
           
           # Zig AR & RANLIB wrappers
-          sudo tee /opt/zig-toolchain/ar << 'EOF' >/dev/null
-          #!/usr/bin/env bash
-          exec /opt/zig/zig ar "$@"
-          EOF
+          sudo bash -c 'cat > /opt/zig-toolchain/ar << "WRAPPER"
+#!/usr/bin/env bash
+exec /opt/zig/zig ar "$@"
+WRAPPER'
           
-          sudo tee /opt/zig-toolchain/ranlib << 'EOF' >/dev/null
-          #!/usr/bin/env bash
-          exec /opt/zig/zig ranlib "$@"
-          EOF
+          sudo bash -c 'cat > /opt/zig-toolchain/ranlib << "WRAPPER"
+#!/usr/bin/env bash
+exec /opt/zig/zig ranlib "$@"
+WRAPPER'
           
           sudo chmod +x /opt/zig-toolchain/*
 
@@ -99,26 +99,25 @@ jobs:
           git apply --verbose workerd-android/patches/workerd-android-bionic.patch
           
           echo "[+] Appending Android Bionic configuration to .bazelrc..."
-          cat << 'EOF' >> .bazelrc
-
-# --- Android ARM64 Bionic libc configuration ---
-build:android --config=unix
-build:android --@workerd//src/workerd/server:use_tcmalloc=False
-build:android --@v8//:v8_use_perfetto=False
-build:android --copt=-D__ANDROID__
-build:android --copt=-D__ANDROID_API__=29
-build:android --copt=-D_GNU_SOURCE
-build:android --copt=-fPIC
-build:android --linkopt=-fuse-ld=lld
-build:android --linkopt=-Wl,-z,nocopyreloc
-build:android --linkopt=-Wl,--hash-style=both
-build:android --linkopt=-llog
-build:android --strip=always
-
-build:release_android --config=release_unix
-build:release_android --config=android
-build:release_android --linkopt="-Wl,-O2"
-EOF
+          printf '%s\n' \
+            '' \
+            '# --- Android ARM64 Bionic libc configuration ---' \
+            'build:android --config=unix' \
+            'build:android --@workerd//src/workerd/server:use_tcmalloc=False' \
+            'build:android --@v8//:v8_use_perfetto=False' \
+            'build:android --copt=-D__ANDROID__' \
+            'build:android --copt=-D__ANDROID_API__=29' \
+            'build:android --copt=-D_GNU_SOURCE' \
+            'build:android --copt=-fPIC' \
+            'build:android --linkopt=-fuse-ld=lld' \
+            'build:android --linkopt=-Wl,-z,nocopyreloc' \
+            'build:android --linkopt=-Wl,--hash-style=both' \
+            'build:android --linkopt=-llog' \
+            'build:android --strip=always' \
+            '' \
+            'build:release_android --config=release_unix' \
+            'build:release_android --config=android' \
+            'build:release_android --linkopt="-Wl,-O2"' >> .bazelrc
 
       - name: Set up toolchain (workerd setup-runner)
         uses: ./.github/actions/setup-runner
@@ -193,19 +192,18 @@ EOF
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.resolve.outputs.tag }}"
-          cat << 'EOF' > "$RUNNER_TEMP/release_notes.md"
-          ### Cloudflare workerd Native Android ARM64 Release
-
-          - Compiled for **Android ARM64 inside Termux (Bionic libc)** without PRoot or Glibc.
-          - Cross-compiled with **Zig latest** toolchain.
-          - **TCMalloc disabled** (`use_tcmalloc=False`): Resolves kernel aborts on 39-bit Virtual Address (VA) space (`CONFIG_ARM64_VA_BITS=39`).
-          - Verified with embedded SQLite and Durable Objects under emulated 39-bit address limits.
-
-          #### Quick Install in Termux:
-          ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
-          ```
-          EOF
+          printf '%s\n' \
+            "### Cloudflare workerd Native Android ARM64 Release" \
+            "" \
+            "- Compiled for **Android ARM64 inside Termux (Bionic libc)** without PRoot or Glibc." \
+            "- Cross-compiled with **Zig latest** toolchain." \
+            "- **TCMalloc disabled** (\`use_tcmalloc=False\`): Resolves kernel aborts on 39-bit Virtual Address (VA) space (\`CONFIG_ARM64_VA_BITS=39\`)." \
+            "- Verified with embedded SQLite and Durable Objects under emulated 39-bit address limits." \
+            "" \
+            "#### Quick Install in Termux:" \
+            "\`\`\`bash" \
+            "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash" \
+            "\`\`\`" > "$RUNNER_TEMP/release_notes.md"
 
           gh release create "$TAG" \
             "$RUNNER_TEMP/artifacts/workerd-android-arm64.tar.gz" \
